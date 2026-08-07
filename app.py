@@ -16,6 +16,8 @@ st.write(
     "dürfen unzugeordnet bleiben."
 )
 
+# Diese Spalten sind fest vorgegeben. Jede weitere Spalte wird als Jahr bzw.
+# frei benannte Vergleichsperiode interpretiert.
 KONTEN_STAMMSPALTEN = ["Konto", "Kontobezeichnung"]
 BWA_STAMMSPALTEN = ["BWA_Position", "BWA_Bezeichnung"]
 
@@ -30,6 +32,7 @@ def vorlagen_download(konten_df, bwa_df):
 
 
 def lese_excel(upload, bevorzugtes_blatt):
+    """Liest ein fest benanntes Tabellenblatt aus der hochgeladenen Arbeitsmappe."""
     datei = pd.ExcelFile(io.BytesIO(upload.getvalue()))
     if bevorzugtes_blatt not in datei.sheet_names:
         raise ValueError(f"Das Tabellenblatt „{bevorzugtes_blatt}“ fehlt.")
@@ -41,6 +44,7 @@ def lese_excel(upload, bevorzugtes_blatt):
 
 
 def kennung_als_text(wert):
+    """Erhält Konten wie 1000 als '1000' statt als '1000.0'."""
     if pd.isna(wert):
         return ""
     if isinstance(wert, float) and wert.is_integer():
@@ -49,6 +53,7 @@ def kennung_als_text(wert):
 
 
 def validiere_tabelle(df, stammspalten, tabellenname):
+    """Prüft Pflichtspalten, eindeutige Kennungen und numerische Periodenwerte."""
     fehlend = [spalte for spalte in stammspalten if spalte not in df.columns]
     if fehlend:
         raise ValueError(f"{tabellenname}: Fehlende Spalten: {', '.join(fehlend)}")
@@ -76,6 +81,7 @@ def validiere_tabelle(df, stammspalten, tabellenname):
 
 
 def formatiere_arbeitsmappe(writer):
+    """Wendet ein einheitliches, gut lesbares Format auf alle Exportblätter an."""
     kopf_fuellung = PatternFill("solid", fgColor="1F4E78")
     kopf_schrift = Font(color="FFFFFF", bold=True)
     for blatt in writer.book.worksheets:
@@ -136,6 +142,7 @@ try:
     bwa_roh = lese_excel(excel_upload, "BWA")
     konten_df, konten_jahre = validiere_tabelle(konten_roh, KONTEN_STAMMSPALTEN, "Konten-Datei")
     bwa_df, bwa_jahre = validiere_tabelle(bwa_roh, BWA_STAMMSPALTEN, "BWA-Datei")
+    # Nur Perioden mit identischen Namen lassen sich sicher miteinander vergleichen.
     if set(konten_jahre) != set(bwa_jahre):
         nur_konten = sorted(set(konten_jahre) - set(bwa_jahre))
         nur_bwa = sorted(set(bwa_jahre) - set(konten_jahre))
@@ -165,12 +172,19 @@ with st.expander("Eingabedaten prüfen"):
 if st.button("🚀 Konten optimal zuordnen", type="primary"):
     startzeit = time.perf_counter()
     with st.spinner("CBC optimiert die Zuordnung …"):
+        # Ein globales MILP-Modell verhindert, dass eine früh bearbeitete BWA-Zeile
+        # gute Konten verbraucht, die an einer späteren Position dringender benötigt werden.
         problem = pulp.LpProblem("SuSa_zu_BWA", pulp.LpMinimize)
         konten_indizes = range(len(konten_df))
         bwa_indizes = range(len(bwa_df))
+        # zuordnung[konto][position] ist 1, wenn das Konto dieser BWA-Position
+        # zugeordnet wird. Es gibt bewusst keine separate Variable pro Jahr:
+        # Die einmal gewählte Position gilt dadurch automatisch für alle Jahre.
         zuordnung = pulp.LpVariable.dicts(
             "Zuordnung", (konten_indizes, bwa_indizes), cat="Binary"
         )
+        # Positive und negative Abweichungsvariablen bilden den Absolutbetrag
+        # linear ab, damit CBC die Zielabweichungen minimieren kann.
         abw_pos = pulp.LpVariable.dicts(
             "Abweichung_Pos", (bwa_indizes, range(len(jahre))), lowBound=0
         )
@@ -178,14 +192,20 @@ if st.button("🚀 Konten optimal zuordnen", type="primary"):
             "Abweichung_Neg", (bwa_indizes, range(len(jahre))), lowBound=0
         )
 
+        # Zielfunktion: Summe aller absoluten Abweichungen über sämtliche
+        # BWA-Positionen und Jahre minimieren.
         problem += pulp.lpSum(
             abw_pos[p][j] + abw_neg[p][j]
             for p in bwa_indizes for j in range(len(jahre))
         )
 
+        # Ein Konto darf höchstens einer Position angehören. Durch "<= 1" darf
+        # es unzugeordnet bleiben; "== 1" würde eine Zuordnung erzwingen.
         for konto_idx in konten_indizes:
             problem += pulp.lpSum(zuordnung[konto_idx][p] for p in bwa_indizes) <= 1
 
+        # Für jede Position und jedes Jahr wird die Summe der zugeordneten
+        # Konten mit dem eingegebenen BWA-Zielwert verglichen.
         for position_idx in bwa_indizes:
             for jahr_idx, jahr in enumerate(jahre):
                 ist_summe = pulp.lpSum(
@@ -206,6 +226,7 @@ if st.button("🚀 Konten optimal zuordnen", type="primary"):
         st.stop()
 
     laufzeit = time.perf_counter() - startzeit
+    # Binäre Solverwerte werden wieder in die fachlichen BWA-Kennungen übersetzt.
     zugeordnete_positionen = []
     for konto_idx in konten_indizes:
         ausgewaehlt = [
@@ -225,6 +246,7 @@ if st.button("🚀 Konten optimal zuordnen", type="primary"):
     ]
     anzahl_nicht_zugeordnet = sum(p is None for p in zugeordnete_positionen)
 
+    # Ergebnisaggregation je BWA-Position: Ziel, Ist und signierte Abweichung.
     vergleich_zeilen = []
     for position_idx in bwa_indizes:
         konto_mask = [p == position_idx for p in zugeordnete_positionen]
