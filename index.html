@@ -51,8 +51,10 @@
       <label for="j2">Ziel Gesamtsumme Jahr 2</label><input id="j2" type="number" value="1100" step="1">
       <label for="j3">Ziel Gesamtsumme Jahr 3</label><input id="j3" type="number" value="1300" step="1">
       <label for="j4">Ziel Gesamtsumme Jahr 4</label><input id="j4" type="number" value="1000" step="1">
+      <label for="variantCount">Anzahl der Varianten</label><input id="variantCount" type="number" value="10" min="1" max="50" step="1">
+      <label for="secondsPerVariant">Max. Zeit je Variante (Sekunden)</label><input id="secondsPerVariant" type="number" value="15" min="1" max="300" step="1">
       <label for="file">Ausgefüllte Excel-Datei</label><input id="file" type="file" accept=".xlsx,.xls">
-      <button id="calculate">Top 10 Kombinationen berechnen</button>
+      <button id="calculate">Kombinationen berechnen</button>
       <p class="hint">Benötigte Spalten: Objektname, Jahr_1, Jahr_2, Jahr_3, Jahr_4.</p>
     </aside>
     <section class="card">
@@ -156,15 +158,24 @@
       if (!file) return setStatus('Bitte eine Excel-Datei auswählen.', 'error');
       const targets = ['j1','j2','j3','j4'].map(id => Number($(id).value));
       if (targets.some(v => !Number.isFinite(v))) return setStatus('Bitte vier gültige Zielwerte eingeben.', 'error');
-      $('calculate').disabled = true; $('results').hidden = true; $('progress').hidden = false; $('progress').value = 0;
+      const variantCount = Number($('variantCount').value);
+      const secondsPerVariant = Number($('secondsPerVariant').value);
+      if (!Number.isInteger(variantCount) || variantCount < 1 || variantCount > 50) {
+        return setStatus('Die Variantenanzahl muss zwischen 1 und 50 liegen.', 'error');
+      }
+      if (!Number.isInteger(secondsPerVariant) || secondsPerVariant < 1 || secondsPerVariant > 300) {
+        return setStatus('Die Zeit je Variante muss zwischen 1 und 300 Sekunden liegen.', 'error');
+      }
+      $('calculate').disabled = true; $('results').hidden = true; $('progress').hidden = false;
+      $('progress').max = variantCount; $('progress').value = 0;
       solutions = []; metrics = [];
       try {
         sourceRows = await readRows(file); validate(sourceRows);
         glpk = await glpkPromise;
-        for (let n = 0; n < 10; n++) {
-          setStatus(`Berechne Variante ${n + 1} von 10 …`);
+        for (let n = 0; n < variantCount; n++) {
+          setStatus(`Berechne Variante ${n + 1} von ${variantCount} (max. ${secondsPerVariant} Sekunden) …`);
           await new Promise(resolve => setTimeout(resolve, 0));
-          const result = await glpk.solve(modelFor(sourceRows, targets, solutions), {msglev: glpk.GLP_MSG_OFF, tmlim: 15, presol: true});
+          const result = await glpk.solve(modelFor(sourceRows, targets, solutions), {msglev: glpk.GLP_MSG_OFF, tmlim: secondsPerVariant, presol: true});
           if (![glpk.GLP_OPT, glpk.GLP_FEAS].includes(result.result.status)) break;
           const sol = sourceRows.map((_, i) => Math.round(result.result.vars[`x_${i}`] || 0));
           solutions.push(sol);
