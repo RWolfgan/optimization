@@ -9,10 +9,11 @@
     :root { color-scheme: light; font-family: Inter, system-ui, sans-serif; color: #172033; background: #f4f7fb; }
     * { box-sizing: border-box; }
     body { margin: 0; }
-    header { padding: 28px max(24px, calc((100vw - 1200px) / 2)); background: #173b68; color: white; }
+    header { width: 100%; padding: 28px max(24px, calc((100vw - 1200px) / 2)); background: #173b68; color: white; }
     header h1 { margin: 0 0 6px; font-size: clamp(1.5rem, 3vw, 2.2rem); }
     header p { margin: 0; opacity: .84; }
     main { max-width: 1200px; margin: 26px auto; padding: 0 20px 40px; display: grid; grid-template-columns: 310px 1fr; gap: 24px; }
+    main > * { min-width: 0; }
     .card { background: white; border-radius: 14px; padding: 20px; box-shadow: 0 4px 18px #173b6814; }
     h2 { margin: 0 0 16px; font-size: 1.1rem; }
     label { display: block; margin: 12px 0 5px; font-weight: 650; font-size: .92rem; }
@@ -149,7 +150,13 @@
       const body = table.createTBody();
       rows.forEach(row => {
         const tr = body.insertRow();
-        cols.forEach(c => { const td = tr.insertCell(); td.textContent = row[c]; });
+        cols.forEach(c => {
+          const td = tr.insertCell();
+          const value = row[c];
+          td.textContent = table.id === 'metrics' && typeof value === 'number'
+            ? value.toLocaleString('de-DE', {minimumFractionDigits: 1, maximumFractionDigits: 1})
+            : value;
+        });
       });
     }
 
@@ -180,11 +187,15 @@
           const sol = sourceRows.map((_, i) => Math.round(result.result.vars[`x_${i}`] || 0));
           solutions.push(sol);
           const sums = REQUIRED.slice(1).map(col => sourceRows.reduce((s, row, i) => s + row[col] * sol[i], 0));
+          const roundToOneDecimal = value => Math.round((value + Number.EPSILON) * 10) / 10;
           metrics.push({
             Variante: `Variante_${n + 1}`,
             Status: result.result.status === glpk.GLP_OPT ? 'Optimal' : 'Gute Näherung',
-            'Abweichung Gesamt': sums.reduce((s, v, i) => s + Math.abs(v - targets[i]), 0),
-            'Jahr 1 Summe': sums[0], 'Jahr 2 Summe': sums[1], 'Jahr 3 Summe': sums[2], 'Jahr 4 Summe': sums[3]
+            'Abweichung Gesamt': roundToOneDecimal(sums.reduce((s, v, i) => s + Math.abs(v - targets[i]), 0)),
+            'Jahr 1 Summe': roundToOneDecimal(sums[0]),
+            'Jahr 2 Summe': roundToOneDecimal(sums[1]),
+            'Jahr 3 Summe': roundToOneDecimal(sums[2]),
+            'Jahr 4 Summe': roundToOneDecimal(sums[3])
           });
           $('progress').value = n + 1;
         }
