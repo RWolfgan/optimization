@@ -19,17 +19,20 @@ KONTEN_STAMMSPALTEN = ["Konto", "Kontobezeichnung"]
 BWA_STAMMSPALTEN = ["BWA_Position", "BWA_Bezeichnung"]
 
 
-def excel_download(df, sheet_name):
+def vorlagen_download(konten_df, bwa_df):
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name=sheet_name)
+        konten_df.to_excel(writer, index=False, sheet_name="Konten")
+        bwa_df.to_excel(writer, index=False, sheet_name="BWA")
+        formatiere_arbeitsmappe(writer)
     return buffer.getvalue()
 
 
 def lese_excel(upload, bevorzugtes_blatt):
     datei = pd.ExcelFile(io.BytesIO(upload.getvalue()))
-    blatt = bevorzugtes_blatt if bevorzugtes_blatt in datei.sheet_names else datei.sheet_names[0]
-    df = pd.read_excel(datei, sheet_name=blatt).dropna(how="all")
+    if bevorzugtes_blatt not in datei.sheet_names:
+        raise ValueError(f"Das Tabellenblatt „{bevorzugtes_blatt}“ fehlt.")
+    df = pd.read_excel(datei, sheet_name=bevorzugtes_blatt).dropna(how="all")
     df.columns = [str(spalte).strip() for spalte in df.columns]
     if df.columns.duplicated().any():
         raise ValueError("Die Excel-Datei enthält doppelte Spaltennamen.")
@@ -103,15 +106,9 @@ bwa_vorlage = pd.DataFrame({
     **{jahr: [0.0] * 3 for jahr in beispiel_jahre},
 })
 st.sidebar.download_button(
-    "📄 Konten-Vorlage herunterladen",
-    excel_download(konten_vorlage, "Konten"),
-    "konten_vorlage.xlsx",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-)
-st.sidebar.download_button(
-    "📄 BWA-Vorlage herunterladen",
-    excel_download(bwa_vorlage, "BWA"),
-    "bwa_vorlage.xlsx",
+    "📄 Excel-Vorlage herunterladen",
+    vorlagen_download(konten_vorlage, bwa_vorlage),
+    "susa_bwa_vorlage.xlsx",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 )
 
@@ -120,19 +117,22 @@ zeitlimit = st.sidebar.number_input(
     "Maximale Rechenzeit (Sekunden)", min_value=5, max_value=1800, value=120, step=5
 )
 
-spalte_links, spalte_rechts = st.columns(2)
-with spalte_links:
-    konten_upload = st.file_uploader("Konten-/SuSa-Datei", type=["xlsx"], key="konten_upload")
-with spalte_rechts:
-    bwa_upload = st.file_uploader("BWA-Zielstruktur", type=["xlsx"], key="bwa_upload")
+excel_upload = st.file_uploader(
+    "Excel-Datei mit den Tabellenblättern „Konten“ und „BWA“",
+    type=["xlsx"],
+    key="susa_bwa_upload",
+)
 
-if konten_upload is None or bwa_upload is None:
-    st.info("Bitte beide Excel-Dateien auswählen. Die Jahresspalten müssen gleich benannt sein.")
+if excel_upload is None:
+    st.info(
+        "Bitte die ausgefüllte Excel-Datei auswählen. Sie muss die Tabellenblätter „Konten“ "
+        "und „BWA“ mit identisch benannten Jahresspalten enthalten."
+    )
     st.stop()
 
 try:
-    konten_roh = lese_excel(konten_upload, "Konten")
-    bwa_roh = lese_excel(bwa_upload, "BWA")
+    konten_roh = lese_excel(excel_upload, "Konten")
+    bwa_roh = lese_excel(excel_upload, "BWA")
     konten_df, konten_jahre = validiere_tabelle(konten_roh, KONTEN_STAMMSPALTEN, "Konten-Datei")
     bwa_df, bwa_jahre = validiere_tabelle(bwa_roh, BWA_STAMMSPALTEN, "BWA-Datei")
     if set(konten_jahre) != set(bwa_jahre):

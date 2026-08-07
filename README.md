@@ -2,7 +2,7 @@
 
 ## Streamlit-Apps
 
-Die aktuelle `app.py` ordnet Konten aus einer Summen- und Saldenliste genau einer frei definierten BWA-Position zu. Konten- und BWA-Datei enthalten dieselben Jahre als Spalten. Die App minimiert mit CBC die absolute Abweichung aller BWA-Positionen und Jahre gemeinsam.
+Die aktuelle `app.py` ordnet Konten aus einer Summen- und Saldenliste genau einer frei definierten BWA-Position zu. Die Eingabe erfolgt über eine Excel-Datei mit den Tabellenblättern `Konten` und `BWA`; beide enthalten dieselben Jahre als Spalten. Die App minimiert mit CBC die absolute Abweichung aller BWA-Positionen und Jahre gemeinsam.
 
 ```bash
 streamlit run app.py
