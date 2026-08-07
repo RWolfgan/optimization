@@ -2,7 +2,7 @@
 
 ## Browser-Version für Kollegen
 
-Die Datei `index.html` verarbeitet Excel-Dateien und berechnet die Varianten vollständig im Browser. Anzahl der Varianten und maximale Rechenzeit je Variante können in der Oberfläche eingestellt werden. Es werden keine Nutzdaten an einen Server übertragen. Beim Öffnen werden lediglich die JavaScript-Bibliotheken SheetJS und GLPK.js über ein CDN geladen.
+Die Datei `index.html` verarbeitet Excel-Dateien und berechnet die Varianten vollständig im Browser. Anzahl der Varianten und maximale Rechenzeit je Variante können in der Oberfläche eingestellt werden. Die herunterladbare Vorlage enthält außerdem das Blatt `Zielwerte`; dort eingetragene Werte werden beim Auswählen der Datei automatisch in die Oberfläche übernommen. Es werden keine Nutzdaten an einen Server übertragen. Beim Öffnen werden lediglich die JavaScript-Bibliotheken SheetJS und GLPK.js über ein CDN geladen.
 
 Zum lokalen Testen im Projektordner:
 

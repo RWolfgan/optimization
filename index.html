@@ -56,7 +56,7 @@
       <label for="secondsPerVariant">Max. Zeit je Variante (Sekunden)</label><input id="secondsPerVariant" type="number" value="15" min="1" max="300" step="1">
       <label for="file">Ausgefüllte Excel-Datei</label><input id="file" type="file" accept=".xlsx,.xls">
       <button id="calculate">Kombinationen berechnen</button>
-      <p class="hint">Benötigte Spalten: Objektname, Jahr_1, Jahr_2, Jahr_3, Jahr_4.</p>
+      <p class="hint">Benötigte Spalten: Objektname, Jahr_1, Jahr_2, Jahr_3, Jahr_4. Optionale Excel-Zielwerte stehen im Blatt „Zielwerte“ in B2 bis B5.</p>
     </aside>
     <section class="card">
       <h2>2. Ergebnisse</h2>
@@ -88,14 +88,62 @@
       const rows = Array.from({length: 60}, (_, i) => ({Objektname: `Objekt_${i + 1}`, Jahr_1: 0, Jahr_2: 0, Jahr_3: 0, Jahr_4: 0}));
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Daten');
+      const targetRows = [
+        ['Jahr', 'Zielwert'],
+        ['Jahr 1', null],
+        ['Jahr 2', null],
+        ['Jahr 3', null],
+        ['Jahr 4', null]
+      ];
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(targetRows), 'Zielwerte');
       downloadWorkbook(wb, 'struktur_vorlage_4d.xlsx');
     });
 
-    async function readRows(file) {
+    async function readWorkbookData(file) {
       const data = await file.arrayBuffer();
       const wb = XLSX.read(data);
-      return XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], {defval: null});
+      const dataSheet = wb.Sheets.Daten || wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(dataSheet, {defval: null});
+      const targets = [];
+      const targetSheet = wb.Sheets.Zielwerte;
+      if (targetSheet) {
+        const targetRows = XLSX.utils.sheet_to_json(targetSheet, {header: 1, defval: null});
+        for (let i = 0; i < 4; i++) {
+          const rawValue = targetRows[i + 1]?.[1];
+          if (rawValue !== null && rawValue !== '') {
+            const value = Number(rawValue);
+            if (!Number.isFinite(value)) throw new Error(`Ungültiger Zielwert für Jahr ${i + 1}.`);
+            targets[i] = value;
+          }
+        }
+      }
+      return {rows, targets};
     }
+
+    function applyTargets(targets) {
+      let applied = 0;
+      ['j1', 'j2', 'j3', 'j4'].forEach((id, i) => {
+        if (Number.isFinite(targets[i])) {
+          $(id).value = targets[i];
+          applied++;
+        }
+      });
+      return applied;
+    }
+
+    $('file').addEventListener('change', async () => {
+      const file = $('file').files[0];
+      if (!file) return setStatus('Bitte zuerst eine ausgefüllte Excel-Datei auswählen.');
+      try {
+        const workbookData = await readWorkbookData(file);
+        const applied = applyTargets(workbookData.targets);
+        setStatus(applied
+          ? `${applied} Zielwerte aus Excel übernommen. Die Datei ist bereit.`
+          : 'Die Datei ist bereit. Keine ausgefüllten Zielwerte in Excel gefunden.', 'ok');
+      } catch (error) {
+        setStatus(error.message || String(error), 'error');
+      }
+    });
 
     function validate(rows) {
       if (!rows.length) throw new Error('Die Excel-Datei enthält keine Datenzeilen.');
@@ -153,7 +201,9 @@
         cols.forEach(c => {
           const td = tr.insertCell();
           const value = row[c];
-          td.textContent = table.id === 'metrics' && typeof value === 'number'
+          const showOneDecimal = table.id === 'metrics' ||
+            (table.id === 'selection' && REQUIRED.slice(1).includes(c));
+          td.textContent = showOneDecimal && typeof value === 'number'
             ? value.toLocaleString('de-DE', {minimumFractionDigits: 1, maximumFractionDigits: 1})
             : value;
         });
@@ -163,7 +213,7 @@
     $('calculate').addEventListener('click', async () => {
       const file = $('file').files[0];
       if (!file) return setStatus('Bitte eine Excel-Datei auswählen.', 'error');
-      const targets = ['j1','j2','j3','j4'].map(id => Number($(id).value));
+      let targets = ['j1','j2','j3','j4'].map(id => Number($(id).value));
       if (targets.some(v => !Number.isFinite(v))) return setStatus('Bitte vier gültige Zielwerte eingeben.', 'error');
       const variantCount = Number($('variantCount').value);
       const secondsPerVariant = Number($('secondsPerVariant').value);
@@ -177,7 +227,11 @@
       $('progress').max = variantCount; $('progress').value = 0;
       solutions = []; metrics = [];
       try {
-        sourceRows = await readRows(file); validate(sourceRows);
+        const workbookData = await readWorkbookData(file);
+        sourceRows = workbookData.rows;
+        applyTargets(workbookData.targets);
+        targets = ['j1','j2','j3','j4'].map(id => Number($(id).value));
+        validate(sourceRows);
         glpk = await glpkPromise;
         for (let n = 0; n < variantCount; n++) {
           setStatus(`Berechne Variante ${n + 1} von ${variantCount} (max. ${secondsPerVariant} Sekunden) …`);
