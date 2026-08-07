@@ -188,12 +188,12 @@ if uploaded_file is not None:
                         
                         varianten_metriken.append({
                             "Variante": f"Variante_{v_idx}",
-                            "Status": "Bewiesen Perfekt" if solver_status == "Optimal" else "Gute Näherung (Zeitlimit)",
+                            "Status": "Bewiesenes Optimum" if solver_status == "Optimal" else "Gute Näherung (Zeitlimit)",
                             "Abweichung Gesamt": total_abw,
-                            "Jahr 1 Summe": sum_j1,
-                            "Jahr 2 Summe": sum_j2,
-                            "Jahr 3 Summe": sum_j3,
-                            "Jahr 4 Summe": sum_j4
+                            "Abweichung Jahr 1": sum_j1 - ziel_j1,
+                            "Abweichung Jahr 2": sum_j2 - ziel_j2,
+                            "Abweichung Jahr 3": sum_j3 - ziel_j3,
+                            "Abweichung Jahr 4": sum_j4 - ziel_j4
                         })
                     else:
                         break
@@ -210,12 +210,13 @@ if uploaded_file is not None:
                     st.success(f"Erfolgreich {len(gefundene_varianten)} Varianten berechnet!")
                     
                     st.write("### 📈 Übersicht der berechneten Varianten:")
+                    st.caption("Abweichung je Jahr = berechnete Summe − Zielwert (+ über Ziel, − unter Ziel).")
                     metriken_df = pd.DataFrame(varianten_metriken)
                     metriken_format = {
                         spalte: st.column_config.NumberColumn(format="%.1f")
                         for spalte in [
-                            "Abweichung Gesamt", "Jahr 1 Summe", "Jahr 2 Summe",
-                            "Jahr 3 Summe", "Jahr 4 Summe"
+                            "Abweichung Gesamt", "Abweichung Jahr 1", "Abweichung Jahr 2",
+                            "Abweichung Jahr 3", "Abweichung Jahr 4"
                         ]
                     }
                     st.dataframe(
