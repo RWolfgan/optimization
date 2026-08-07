@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>4D Zielwert-Optimierer</title>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <style>
+    :root { color-scheme: light; font-family: Inter, system-ui, sans-serif; color: #172033; background: #f4f7fb; }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    header { padding: 28px max(24px, calc((100vw - 1200px) / 2)); background: #173b68; color: white; }
+    header h1 { margin: 0 0 6px; font-size: clamp(1.5rem, 3vw, 2.2rem); }
+    header p { margin: 0; opacity: .84; }
+    main { max-width: 1200px; margin: 26px auto; padding: 0 20px 40px; display: grid; grid-template-columns: 310px 1fr; gap: 24px; }
+    .card { background: white; border-radius: 14px; padding: 20px; box-shadow: 0 4px 18px #173b6814; }
+    h2 { margin: 0 0 16px; font-size: 1.1rem; }
+    label { display: block; margin: 12px 0 5px; font-weight: 650; font-size: .92rem; }
+    input[type="number"], input[type="file"] { width: 100%; }
+    input[type="number"] { padding: 10px; border: 1px solid #c8d1df; border-radius: 8px; }
+    input[type="file"] { margin: 8px 0 18px; }
+    button { width: 100%; border: 0; border-radius: 9px; padding: 11px 14px; font-weight: 700; cursor: pointer; background: #1769aa; color: white; margin-top: 10px; }
+    button.secondary { background: #e9f1f8; color: #174b78; }
+    button:disabled { opacity: .55; cursor: wait; }
+    .hint { color: #607087; font-size: .88rem; line-height: 1.45; }
+    #status { min-height: 44px; padding: 12px; border-radius: 8px; background: #eef4fa; margin-bottom: 16px; }
+    #status.error { background: #fdecec; color: #982525; }
+    #status.ok { background: #e8f7ee; color: #186139; }
+    progress { width: 100%; height: 12px; margin: 0 0 18px; }
+    .table-wrap { overflow: auto; max-height: 520px; border: 1px solid #dce3ed; border-radius: 9px; }
+    table { border-collapse: collapse; width: 100%; white-space: nowrap; font-size: .88rem; }
+    th, td { text-align: right; padding: 9px 11px; border-bottom: 1px solid #e6ebf2; }
+    th { position: sticky; top: 0; background: #edf3f9; }
+    th:first-child, td:first-child { text-align: left; }
+    .actions { display: flex; gap: 10px; margin-top: 16px; }
+    .actions button { width: auto; }
+    [hidden] { display: none !important; }
+    @media (max-width: 760px) { main { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🧮 4D Zielwert-Optimierer</h1>
+    <p>Die Datei und sämtliche Berechnungen bleiben in diesem Browser.</p>
+  </header>
+  <main>
+    <aside class="card">
+      <h2>1. Daten und Zielwerte</h2>
+      <button id="template" class="secondary">Excel-Vorlage herunterladen</button>
+      <label for="j1">Ziel Gesamtsumme Jahr 1</label><input id="j1" type="number" value="1200" step="1">
+      <label for="j2">Ziel Gesamtsumme Jahr 2</label><input id="j2" type="number" value="1100" step="1">
+      <label for="j3">Ziel Gesamtsumme Jahr 3</label><input id="j3" type="number" value="1300" step="1">
+      <label for="j4">Ziel Gesamtsumme Jahr 4</label><input id="j4" type="number" value="1000" step="1">
+      <label for="file">Ausgefüllte Excel-Datei</label><input id="file" type="file" accept=".xlsx,.xls">
+      <button id="calculate">Top 10 Kombinationen berechnen</button>
+      <p class="hint">Benötigte Spalten: Objektname, Jahr_1, Jahr_2, Jahr_3, Jahr_4.</p>
+    </aside>
+    <section class="card">
+      <h2>2. Ergebnisse</h2>
+      <div id="status">Bitte zuerst eine ausgefüllte Excel-Datei auswählen.</div>
+      <progress id="progress" max="10" value="0" hidden></progress>
+      <div id="results" hidden>
+        <h2>Variantenvergleich</h2><div class="table-wrap"><table id="metrics"></table></div>
+        <h2 style="margin-top:24px">Objektauswahl</h2><div class="table-wrap"><table id="selection"></table></div>
+        <div class="actions"><button id="export">Ergebnisse als Excel herunterladen</button></div>
+      </div>
+    </section>
+  </main>
+  <script type="module">
+    import GLPK from 'https://cdn.jsdelivr.net/npm/glpk.js@5.0.0/+esm';
+
+    const REQUIRED = ['Objektname', 'Jahr_1', 'Jahr_2', 'Jahr_3', 'Jahr_4'];
+    const $ = id => document.getElementById(id);
+    let sourceRows = [], solutions = [], metrics = [], glpk;
+    const glpkPromise = GLPK();
+
+    function setStatus(text, kind = '') {
+      $('status').textContent = text;
+      $('status').className = kind;
+    }
+
+    function downloadWorkbook(workbook, filename) { XLSX.writeFile(workbook, filename); }
+
+    $('template').addEventListener('click', () => {
+      const rows = Array.from({length: 60}, (_, i) => ({Objektname: `Objekt_${i + 1}`, Jahr_1: 0, Jahr_2: 0, Jahr_3: 0, Jahr_4: 0}));
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Daten');
+      downloadWorkbook(wb, 'struktur_vorlage_4d.xlsx');
+    });
+
+    async function readRows(file) {
+      const data = await file.arrayBuffer();
+      const wb = XLSX.read(data);
+      return XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], {defval: null});
+    }
+
+    function validate(rows) {
+      if (!rows.length) throw new Error('Die Excel-Datei enthält keine Datenzeilen.');
+      const missing = REQUIRED.filter(c => !(c in rows[0]));
+      if (missing.length) throw new Error(`Fehlende Spalten: ${missing.join(', ')}`);
+      const names = new Set();
+      rows.forEach((row, i) => {
+        const name = String(row.Objektname ?? '').trim();
+        if (!name) throw new Error(`In Zeile ${i + 2} fehlt der Objektname.`);
+        if (names.has(name)) throw new Error(`Der Objektname „${name}“ kommt mehrfach vor.`);
+        names.add(name);
+        row.Objektname = name;
+        for (const col of REQUIRED.slice(1)) {
+          row[col] = Number(row[col]);
+          if (!Number.isFinite(row[col])) throw new Error(`Ungültiger Zahlenwert in Zeile ${i + 2}, Spalte ${col}.`);
+        }
+      });
+    }
+
+    function modelFor(rows, targets, previous) {
+      const binaryNames = rows.map((_, i) => `x_${i}`);
+      const deviations = REQUIRED.slice(1).flatMap((_, j) => [`dp_${j}`, `dn_${j}`]);
+      const subjectTo = REQUIRED.slice(1).map((col, j) => ({
+        name: `target_${j}`,
+        vars: rows.map((r, i) => ({name: `x_${i}`, coef: r[col]})).concat([
+          {name: `dp_${j}`, coef: -1}, {name: `dn_${j}`, coef: 1}
+        ]),
+        bnds: {type: glpk.GLP_FX, lb: targets[j], ub: targets[j]}
+      }));
+      previous.forEach((sol, n) => {
+        const selected = sol.reduce((sum, x) => sum + x, 0);
+        subjectTo.push({
+          name: `different_${n}`,
+          vars: sol.map((x, i) => ({name: `x_${i}`, coef: x ? 1 : -1})),
+          bnds: {type: glpk.GLP_UP, lb: 0, ub: selected - 1}
+        });
+      });
+      return {
+        name: '4d_optimizer',
+        objective: {direction: glpk.GLP_MIN, name: 'total_deviation', vars: deviations.map(name => ({name, coef: 1}))},
+        subjectTo,
+        binaries: binaryNames
+      };
+    }
+
+    function renderTable(table, rows) {
+      table.replaceChildren();
+      if (!rows.length) return;
+      const cols = Object.keys(rows[0]);
+      const head = table.createTHead().insertRow();
+      cols.forEach(c => { const th = document.createElement('th'); th.textContent = c; head.appendChild(th); });
+      const body = table.createTBody();
+      rows.forEach(row => {
+        const tr = body.insertRow();
+        cols.forEach(c => { const td = tr.insertCell(); td.textContent = row[c]; });
+      });
+    }
+
+    $('calculate').addEventListener('click', async () => {
+      const file = $('file').files[0];
+      if (!file) return setStatus('Bitte eine Excel-Datei auswählen.', 'error');
+      const targets = ['j1','j2','j3','j4'].map(id => Number($(id).value));
+      if (targets.some(v => !Number.isFinite(v))) return setStatus('Bitte vier gültige Zielwerte eingeben.', 'error');
+      $('calculate').disabled = true; $('results').hidden = true; $('progress').hidden = false; $('progress').value = 0;
+      solutions = []; metrics = [];
+      try {
+        sourceRows = await readRows(file); validate(sourceRows);
+        glpk = await glpkPromise;
+        for (let n = 0; n < 10; n++) {
+          setStatus(`Berechne Variante ${n + 1} von 10 …`);
+          await new Promise(resolve => setTimeout(resolve, 0));
+          const result = await glpk.solve(modelFor(sourceRows, targets, solutions), {msglev: glpk.GLP_MSG_OFF, tmlim: 15, presol: true});
+          if (![glpk.GLP_OPT, glpk.GLP_FEAS].includes(result.result.status)) break;
+          const sol = sourceRows.map((_, i) => Math.round(result.result.vars[`x_${i}`] || 0));
+          solutions.push(sol);
+          const sums = REQUIRED.slice(1).map(col => sourceRows.reduce((s, row, i) => s + row[col] * sol[i], 0));
+          metrics.push({
+            Variante: `Variante_${n + 1}`,
+            Status: result.result.status === glpk.GLP_OPT ? 'Optimal' : 'Gute Näherung',
+            'Abweichung Gesamt': sums.reduce((s, v, i) => s + Math.abs(v - targets[i]), 0),
+            'Jahr 1 Summe': sums[0], 'Jahr 2 Summe': sums[1], 'Jahr 3 Summe': sums[2], 'Jahr 4 Summe': sums[3]
+          });
+          $('progress').value = n + 1;
+        }
+        if (!solutions.length) throw new Error('Es konnte keine Kombination berechnet werden.');
+        const selectionRows = sourceRows.map((row, i) => ({...row, ...Object.fromEntries(solutions.map((s, n) => [`Variante_${n + 1} (1=Ja)`, s[i]]))}));
+        renderTable($('metrics'), metrics); renderTable($('selection'), selectionRows);
+        $('results').hidden = false;
+        setStatus(`${solutions.length} Varianten erfolgreich berechnet.`, 'ok');
+      } catch (error) { setStatus(error.message || String(error), 'error'); }
+      finally { $('calculate').disabled = false; $('progress').hidden = true; }
+    });
+
+    $('export').addEventListener('click', () => {
+      const selectionRows = sourceRows.map((row, i) => ({...row, ...Object.fromEntries(solutions.map((s, n) => [`Variante_${n + 1} (1=Ja)`, s[i]]))}));
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(selectionRows), 'Objekt_Auswahl');
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(metrics), 'Varianten_Vergleich');
+      downloadWorkbook(wb, '4d_optimierung_top10_browser.xlsx');
+    });
+  </script>
+</body>
+</html>
