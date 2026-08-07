@@ -11,8 +11,9 @@ from openpyxl.utils import get_column_letter
 st.set_page_config(page_title="SuSa-zu-BWA Optimierer", page_icon="📊", layout="wide")
 st.title("📊 SuSa-zu-BWA Optimierer")
 st.write(
-    "Ordnet jedes Konto genau einer BWA-Position zu und minimiert dabei die "
-    "Abweichungen von den Zielwerten über alle gemeinsamen Jahre."
+    "Ordnet passende Konten höchstens einer BWA-Position zu und minimiert dabei die "
+    "Abweichungen von den Zielwerten über alle gemeinsamen Jahre. Nicht passende Konten "
+    "dürfen unzugeordnet bleiben."
 )
 
 KONTEN_STAMMSPALTEN = ["Konto", "Kontobezeichnung"]
@@ -183,7 +184,7 @@ if st.button("🚀 Konten optimal zuordnen", type="primary"):
         )
 
         for konto_idx in konten_indizes:
-            problem += pulp.lpSum(zuordnung[konto_idx][p] for p in bwa_indizes) == 1
+            problem += pulp.lpSum(zuordnung[konto_idx][p] for p in bwa_indizes) <= 1
 
         for position_idx in bwa_indizes:
             for jahr_idx, jahr in enumerate(jahre):
@@ -207,12 +208,22 @@ if st.button("🚀 Konten optimal zuordnen", type="primary"):
     laufzeit = time.perf_counter() - startzeit
     zugeordnete_positionen = []
     for konto_idx in konten_indizes:
-        position_idx = max(bwa_indizes, key=lambda p: zuordnung[konto_idx][p].varValue or 0)
-        zugeordnete_positionen.append(position_idx)
+        ausgewaehlt = [
+            p for p in bwa_indizes
+            if (zuordnung[konto_idx][p].varValue or 0) > 0.5
+        ]
+        zugeordnete_positionen.append(ausgewaehlt[0] if ausgewaehlt else None)
 
     zuordnung_df = konten_df.copy()
-    zuordnung_df["BWA_Position"] = [bwa_df.iloc[p]["BWA_Position"] for p in zugeordnete_positionen]
-    zuordnung_df["BWA_Bezeichnung"] = [bwa_df.iloc[p]["BWA_Bezeichnung"] for p in zugeordnete_positionen]
+    zuordnung_df["BWA_Position"] = [
+        bwa_df.iloc[p]["BWA_Position"] if p is not None else ""
+        for p in zugeordnete_positionen
+    ]
+    zuordnung_df["BWA_Bezeichnung"] = [
+        bwa_df.iloc[p]["BWA_Bezeichnung"] if p is not None else "Nicht zugeordnet"
+        for p in zugeordnete_positionen
+    ]
+    anzahl_nicht_zugeordnet = sum(p is None for p in zugeordnete_positionen)
 
     vergleich_zeilen = []
     for position_idx in bwa_indizes:
@@ -238,7 +249,7 @@ if st.button("🚀 Konten optimal zuordnen", type="primary"):
     gesamt_abweichung = vergleich_df["Abweichung Gesamt"].sum()
     st.success(
         f"Zuordnung abgeschlossen: {status}, Gesamtabweichung {gesamt_abweichung:,.1f}, "
-        f"Rechenzeit {laufzeit:.1f} Sekunden."
+        f"{anzahl_nicht_zugeordnet} Konten nicht zugeordnet, Rechenzeit {laufzeit:.1f} Sekunden."
     )
 
     st.write("### BWA-Zielvergleich")
@@ -260,16 +271,33 @@ if st.button("🚀 Konten optimal zuordnen", type="primary"):
         column_config={jahr: st.column_config.NumberColumn(format="%.1f") for jahr in jahre},
     )
 
+    if anzahl_nicht_zugeordnet:
+        st.write("### Nicht zugeordnete Konten")
+        st.dataframe(
+            zuordnung_df[zuordnung_df["BWA_Bezeichnung"] == "Nicht zugeordnet"],
+            hide_index=True,
+            use_container_width=True,
+            column_config={jahr: st.column_config.NumberColumn(format="%.1f") for jahr in jahre},
+        )
+
     parameter_df = pd.DataFrame({
-        "Parameter": ["Solver-Status", "Zeitlimit (Sek.)", "Rechenzeit (Sek.)", "Gesamtabweichung"],
-        "Wert": [status, int(zeitlimit), round(laufzeit, 1), round(gesamt_abweichung, 1)],
+        "Parameter": [
+            "Solver-Status", "Zeitlimit (Sek.)", "Rechenzeit (Sek.)",
+            "Gesamtabweichung", "Konten gesamt", "Konten nicht zugeordnet"
+        ],
+        "Wert": [
+            status, int(zeitlimit), round(laufzeit, 1), round(gesamt_abweichung, 1),
+            len(konten_df), anzahl_nicht_zugeordnet
+        ],
     })
+    nicht_zugeordnet_df = zuordnung_df[zuordnung_df["BWA_Bezeichnung"] == "Nicht zugeordnet"].copy()
     export_buffer = io.BytesIO()
     with pd.ExcelWriter(export_buffer, engine="openpyxl") as writer:
         zuordnung_df.to_excel(writer, index=False, sheet_name="Kontenzuordnung")
         vergleich_df.to_excel(writer, index=False, sheet_name="BWA_Vergleich")
         bwa_df.to_excel(writer, index=False, sheet_name="BWA_Ziele")
         parameter_df.to_excel(writer, index=False, sheet_name="Parameter")
+        nicht_zugeordnet_df.to_excel(writer, index=False, sheet_name="Nicht_zugeordnet")
         formatiere_arbeitsmappe(writer)
 
     st.download_button(
